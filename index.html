@@ -476,19 +476,25 @@
         
         const title = (item.title || '').toLowerCase();
         const desc = (item.description || '').toLowerCase();
+        const creator = (item.creator || '').toLowerCase();
         
         // Exact phrase match
         if (title.includes(queryLower)) boost += 0.4;
         if (desc.includes(queryLower)) boost += 0.2;
+        if (creator.includes(queryLower)) boost += 0.15;
         
         // Individual word matches
         for (const word of queryWords) {
           if (title.includes(word)) boost += 0.1;
           if (desc.includes(word)) boost += 0.05;
+          if (creator.includes(word)) boost += 0.03;
         }
         
         // Title starts with query
         if (title.startsWith(queryLower)) boost += 0.3;
+        
+        // Creator starts with query (for searching by podcast name)
+        if (creator.startsWith(queryLower)) boost += 0.2;
         
         return {
           ...item,
@@ -507,13 +513,18 @@
       }
       
       container.innerHTML = results.map(item => {
-        const imageUrl = item.clean_imageUrl || item.imageUrl || 
+        // Use the correct field names from your JSON structure
+        const imageUrl = item.image || 
           'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iODAiIGhlaWdodD0iODAiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+CiAgPHJlY3Qgd2lkdGg9IjgwIiBoZWlnaHQ9IjgwIiBmaWxsPSIjZTBlMGUwIi8+CiAgPHRleHQgeD0iNTAlIiB5PSI1MCUiIGZvbnQtZmFtaWx5PSJBcmlhbCIgZm9udC1zaXplPSIzMCIgZmlsbD0iIzk5OSIgdGV4dC1hbmNob3I9Im1pZGRsZSIgZG9taW5hbnQtYmFzZWxpbmU9Im1pZGRsZSI+8J+OpjwvdGV4dD4KPC9zdmc+';
         
         const title = item.title || 'Untitled Episode';
         const description = item.description || 'No description available';
+        const creator = item.creator || '';
         const link = item.link || '#';
         const score = Math.round((item.finalScore || item.score || 0) * 100);
+        
+        // Add creator name if available
+        const creatorInfo = creator ? `<span style="color: #888; font-size: 12px; display: block; margin-top: 4px;">by ${escapeHtml(creator)}</span>` : '';
         
         return `
           <div class="result-item">
@@ -528,6 +539,7 @@
               <a href="${link}" target="_blank" rel="noopener noreferrer" class="podcast-title">
                 ${escapeHtml(title)}
               </a>
+              ${creatorInfo}
               <p class="podcast-description">${escapeHtml(description)}</p>
             </div>
             <div class="score-badge">${score}%</div>
