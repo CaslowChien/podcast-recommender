@@ -40,8 +40,15 @@
       margin-bottom: 30px;
     }
     
-    #search-container {
+    .controls-container {
+      display: flex;
+      gap: 15px;
       margin-bottom: 30px;
+      align-items: stretch;
+    }
+    
+    #search-container {
+      flex: 1;
       position: relative;
     }
     
@@ -53,6 +60,7 @@
       font-size: 16px; 
       transition: all 0.3s;
       background: #f8f8f8;
+      height: 100%;
     }
     
     #search:focus {
@@ -60,6 +68,46 @@
       border-color: #667eea;
       background: white;
       box-shadow: 0 0 0 4px rgba(102, 126, 234, 0.1);
+    }
+    
+    .language-filter {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+    
+    .filter-btn {
+      padding: 12px 20px;
+      border: 2px solid #e0e0e0;
+      background: #f8f8f8;
+      border-radius: 25px;
+      cursor: pointer;
+      font-size: 15px;
+      transition: all 0.3s;
+      white-space: nowrap;
+      color: #666;
+      font-weight: 500;
+    }
+    
+    .filter-btn:hover {
+      background: #f0f0f0;
+      transform: translateY(-1px);
+    }
+    
+    .filter-btn.active {
+      background: linear-gradient(135deg, #667eea, #764ba2);
+      color: white;
+      border-color: #667eea;
+    }
+    
+    @media (max-width: 768px) {
+      .controls-container {
+        flex-direction: column;
+      }
+      
+      .language-filter {
+        justify-content: center;
+      }
     }
     
     #init-message {
@@ -191,6 +239,12 @@
       margin-bottom: 20px;
       opacity: 0.5;
     }
+    
+    .language-info {
+      font-size: 11px;
+      color: #999;
+      margin-top: 4px;
+    }
   </style>
 </head>
 <body>
@@ -198,13 +252,20 @@
     <h1>🎧 AI Podcast Recommender</h1>
     <p class="subtitle">Search through thousands of podcast episodes using AI</p>
     
-    <div id="search-container">
-      <input 
-        id="search" 
-        type="text"
-        placeholder="Try searching for: technology, comedy, history, science..." 
-        autocomplete="off"
-      />
+    <div class="controls-container">
+      <div id="search-container">
+        <input 
+          id="search" 
+          type="text"
+          placeholder="Try searching for: technology, comedy, history, science..." 
+          autocomplete="off"
+        />
+      </div>
+      <div class="language-filter">
+        <button class="filter-btn active" data-filter="all">All</button>
+        <button class="filter-btn" data-filter="simplified">简体中文</button>
+        <button class="filter-btn" data-filter="traditional">繁體中文</button>
+      </div>
     </div>
     
     <div id="init-message">
@@ -232,10 +293,32 @@
       MODEL_NAME: 'Xenova/all-MiniLM-L6-v2'  // Embedding model
     };
 
+    // Language filter configuration
+    const LANGUAGE_FILTERS = {
+      // Languages to exclude completely
+      EXCLUDED: [
+        'zh-rtw', 'zh-hant', 'zh-Hant-', 'zh-Hans-', 'zh-Hant', 
+        'en-us,zh', 'zh-US', 'eng, zho', 'zh-sg', 'zh-HK', 'zh-hk', 'zh-Ha'
+      ],
+      
+      // Simplified Chinese variants
+      SIMPLIFIED: [
+        'zh-CN', 'zh_CN', 'zh-cn', 'zh', 'Zh', 'ZH', 
+        'zh-Hans', 'zh-hans', 'zh-ZH', 'zh-zh', 'zho'
+      ],
+      
+      // Traditional Chinese variants
+      TRADITIONAL: [
+        'zh-tw', 'zh-TW', 'zh_TW', 'zh_tw', 'zh-MO'
+      ]
+    };
+
     let embedder = null;
     let isInitializing = false;
     let isSearching = false;
     let searchAbortController = null;
+    let currentLanguageFilter = 'all';
+    let lastSearchQuery = '';
 
     // Import transformers library with fallback
     async function loadTransformers() {
@@ -299,6 +382,44 @@
       }
     }
 
+    // Check if an item should be filtered based on language
+    function shouldIncludeItem(item) {
+      const itemLanguage = (item.language || '').toLowerCase().trim();
+      
+      // First, exclude completely blocked languages
+      for (const excluded of LANGUAGE_FILTERS.EXCLUDED) {
+        if (itemLanguage === excluded.toLowerCase()) {
+          return false;
+        }
+      }
+      
+      // If "All" is selected, include everything not in excluded list
+      if (currentLanguageFilter === 'all') {
+        return true;
+      }
+      
+      // Check specific language filters
+      if (currentLanguageFilter === 'simplified') {
+        for (const lang of LANGUAGE_FILTERS.SIMPLIFIED) {
+          if (itemLanguage === lang.toLowerCase()) {
+            return true;
+          }
+        }
+        return false;
+      }
+      
+      if (currentLanguageFilter === 'traditional') {
+        for (const lang of LANGUAGE_FILTERS.TRADITIONAL) {
+          if (itemLanguage === lang.toLowerCase()) {
+            return true;
+          }
+        }
+        return false;
+      }
+      
+      return true;
+    }
+
     // Calculate cosine similarity between two vectors
     function cosineSimilarity(a, b) {
       if (!a || !b || a.length !== b.length) return 0;
@@ -350,6 +471,9 @@
         return;
       }
 
+      // Save the current query
+      lastSearchQuery = query;
+
       // Cancel previous search if still running
       if (searchAbortController) {
         searchAbortController.abort();
@@ -371,6 +495,7 @@
         }
 
         console.log('Generating embedding for query:', query);
+        console.log('Language filter:', currentLanguageFilter);
         
         // Generate query embedding
         const output = await embedder(query, { 
@@ -387,6 +512,7 @@
         const topResults = [];
         let processedShards = 0;
         let totalItems = 0;
+        let filteredCount = 0;
         let failedShards = 0;
 
         // Process shards in batches
@@ -414,6 +540,13 @@
               if (!item || !item.embedding || !Array.isArray(item.embedding)) continue;
               
               totalItems++;
+              
+              // Apply language filter
+              if (!shouldIncludeItem(item)) {
+                filteredCount++;
+                continue;
+              }
+              
               const score = cosineSimilarity(queryVector, item.embedding);
               
               // Keep top K results
@@ -437,14 +570,17 @@
           
           // Update progress
           if (processedShards % 10 === 0 || processedShards === CONFIG.SHARD_COUNT) {
-            updateStatus(`Searched ${processedShards} of ${CONFIG.SHARD_COUNT} shards...`);
+            const filterText = currentLanguageFilter !== 'all' 
+              ? ` (${filteredCount} filtered by language)` 
+              : '';
+            updateStatus(`Searched ${processedShards} of ${CONFIG.SHARD_COUNT} shards${filterText}...`);
           }
         }
 
-        console.log(`Search complete: ${processedShards} shards, ${totalItems} items, ${failedShards} failed`);
+        console.log(`Search complete: ${processedShards} shards, ${totalItems} items, ${filteredCount} filtered, ${failedShards} failed`);
         
         if (topResults.length === 0) {
-          displayNoResults();
+          displayNoResults(filteredCount > 0);
           return;
         }
 
@@ -454,7 +590,11 @@
         
         // Display top results
         displayResults(reranked.slice(0, CONFIG.FINAL_K));
-        updateStatus(`Found ${reranked.length} relevant podcasts`);
+        
+        const filterInfo = currentLanguageFilter !== 'all' 
+          ? ` (${filteredCount} filtered)` 
+          : '';
+        updateStatus(`Found ${reranked.length} relevant podcasts${filterInfo}`);
         
       } catch (error) {
         console.error('Search error:', error);
@@ -508,7 +648,7 @@
       const container = document.getElementById('results');
       
       if (!results || results.length === 0) {
-        displayNoResults();
+        displayNoResults(false);
         return;
       }
       
@@ -522,9 +662,15 @@
         const creator = item.creator || '';
         const link = item.link || '#';
         const score = Math.round((item.finalScore || item.score || 0) * 100);
+        const language = item.language || '';
         
         // Add creator name if available
         const creatorInfo = creator ? `<span style="color: #888; font-size: 12px; display: block; margin-top: 4px;">by ${escapeHtml(creator)}</span>` : '';
+        
+        // Add language info if available and not "All" filter
+        const languageInfo = language && currentLanguageFilter !== 'all' 
+          ? `<div class="language-info">Language: ${escapeHtml(language)}</div>` 
+          : '';
         
         return `
           <div class="result-item">
@@ -541,6 +687,7 @@
               </a>
               ${creatorInfo}
               <p class="podcast-description">${escapeHtml(description)}</p>
+              ${languageInfo}
             </div>
             <div class="score-badge">${score}%</div>
           </div>
@@ -549,14 +696,23 @@
     }
 
     // Display no results message
-    function displayNoResults() {
+    function displayNoResults(hasFilteredResults = false) {
+      const message = hasFilteredResults 
+        ? `<p>No matching podcasts found with current language filter</p>
+           <p style="font-size: 14px; margin-top: 10px; color: #bbb;">
+             Try selecting "All" languages or different search terms
+           </p>`
+        : `<p>No matching podcasts found</p>
+           <p style="font-size: 14px; margin-top: 10px; color: #bbb;">
+             Try different keywords or a broader search term
+           </p>`;
+      
       document.getElementById('results').innerHTML = `
         <div class="no-results">
           <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.172 16.172a4 4 0 015.656 0M9 10h.01M15 10h.01M12 12h.01M12 12h.01M12 12h.01M12 12h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
           </svg>
-          <p>No matching podcasts found</p>
-          <p style="font-size: 14px; margin-top: 10px; color: #bbb;">Try different keywords or a broader search term</p>
+          ${message}
         </div>
       `;
     }
@@ -598,9 +754,24 @@
       };
     }
 
+    // Handle language filter changes
+    function handleLanguageFilterChange(filter) {
+      currentLanguageFilter = filter;
+      
+      // Update button states
+      document.querySelectorAll('.filter-btn').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.filter === filter);
+      });
+      
+      // Re-run search if there's a query
+      if (lastSearchQuery) {
+        performSearch(lastSearchQuery);
+      }
+    }
+
     // Initialize application
     async function initialize() {
-      console.log('Initializing AI Podcast Recommender...');
+      console.log('Initializing AI Podcast Recommender with Language Filters...');
       
       const searchInput = document.getElementById('search');
       searchInput.disabled = true;
@@ -608,6 +779,13 @@
       try {
         // Initialize models first
         await initializeModels();
+        
+        // Set up language filter handlers
+        document.querySelectorAll('.filter-btn').forEach(btn => {
+          btn.addEventListener('click', () => {
+            handleLanguageFilterChange(btn.dataset.filter);
+          });
+        });
         
         // Set up search handler with debouncing
         const debouncedSearch = debounce(performSearch, CONFIG.DEBOUNCE_DELAY);
@@ -618,6 +796,7 @@
           } else {
             document.getElementById('results').innerHTML = '';
             updateStatus('');
+            lastSearchQuery = '';
           }
         });
         
@@ -625,7 +804,10 @@
         searchInput.disabled = false;
         searchInput.focus();
         
-        console.log('Application ready!');
+        console.log('Application ready with language filtering!');
+        console.log('Excluded languages:', LANGUAGE_FILTERS.EXCLUDED);
+        console.log('Simplified Chinese codes:', LANGUAGE_FILTERS.SIMPLIFIED);
+        console.log('Traditional Chinese codes:', LANGUAGE_FILTERS.TRADITIONAL);
         
       } catch (error) {
         console.error('Failed to initialize:', error);
