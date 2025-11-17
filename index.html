@@ -42,7 +42,7 @@
     
     .controls-container {
       display: flex;
-      gap: 15px;
+      gap: 12px;
       margin-bottom: 30px;
       align-items: stretch;
     }
@@ -60,7 +60,7 @@
       font-size: 16px; 
       transition: all 0.3s;
       background: #f8f8f8;
-      height: 100%;
+      height: 52px;
     }
     
     #search:focus {
@@ -70,34 +70,80 @@
       box-shadow: 0 0 0 4px rgba(102, 126, 234, 0.1);
     }
     
-    .language-filter {
-      display: flex;
-      gap: 8px;
-      align-items: center;
+    .language-select {
+      position: relative;
     }
     
-    .filter-btn {
-      padding: 12px 20px;
+    #language-filter {
+      padding: 14px 20px;
+      padding-right: 40px;
       border: 2px solid #e0e0e0;
       background: #f8f8f8;
-      border-radius: 25px;
-      cursor: pointer;
+      border-radius: 26px;
       font-size: 15px;
-      transition: all 0.3s;
-      white-space: nowrap;
       color: #666;
+      cursor: pointer;
+      appearance: none;
+      -webkit-appearance: none;
+      -moz-appearance: none;
+      transition: all 0.3s;
+      min-width: 150px;
+      height: 52px;
       font-weight: 500;
     }
     
-    .filter-btn:hover {
-      background: #f0f0f0;
-      transform: translateY(-1px);
+    #language-filter:focus {
+      outline: none;
+      border-color: #667eea;
+      background: white;
+      box-shadow: 0 0 0 4px rgba(102, 126, 234, 0.1);
     }
     
-    .filter-btn.active {
+    #language-filter:hover {
+      background: #f0f0f0;
+    }
+    
+    .language-select::after {
+      content: '▼';
+      position: absolute;
+      right: 20px;
+      top: 50%;
+      transform: translateY(-50%);
+      pointer-events: none;
+      color: #666;
+      font-size: 12px;
+    }
+    
+    #search-button {
+      padding: 14px 28px;
       background: linear-gradient(135deg, #667eea, #764ba2);
       color: white;
-      border-color: #667eea;
+      border: none;
+      border-radius: 26px;
+      font-size: 15px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.3s;
+      height: 52px;
+      white-space: nowrap;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    
+    #search-button:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 4px 12px rgba(102, 126, 234, 0.3);
+    }
+    
+    #search-button:active {
+      transform: translateY(0);
+    }
+    
+    #search-button:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+      transform: none;
     }
     
     @media (max-width: 768px) {
@@ -105,7 +151,8 @@
         flex-direction: column;
       }
       
-      .language-filter {
+      #search-button {
+        width: 100%;
         justify-content: center;
       }
     }
@@ -239,12 +286,6 @@
       margin-bottom: 20px;
       opacity: 0.5;
     }
-    
-    .language-info {
-      font-size: 11px;
-      color: #999;
-      margin-top: 4px;
-    }
   </style>
 </head>
 <body>
@@ -261,11 +302,17 @@
           autocomplete="off"
         />
       </div>
-      <div class="language-filter">
-        <button class="filter-btn active" data-filter="all">All</button>
-        <button class="filter-btn" data-filter="simplified">简体中文</button>
-        <button class="filter-btn" data-filter="traditional">繁體中文</button>
+      <div class="language-select">
+        <select id="language-filter">
+          <option value="all">All Languages</option>
+          <option value="simplified">简体中文</option>
+          <option value="traditional">繁體中文</option>
+        </select>
       </div>
+      <button id="search-button">
+        <span>🔍</span>
+        <span>Search</span>
+      </button>
     </div>
     
     <div id="init-message">
@@ -658,19 +705,13 @@
           'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iODAiIGhlaWdodD0iODAiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+CiAgPHJlY3Qgd2lkdGg9IjgwIiBoZWlnaHQ9IjgwIiBmaWxsPSIjZTBlMGUwIi8+CiAgPHRleHQgeD0iNTAlIiB5PSI1MCUiIGZvbnQtZmFtaWx5PSJBcmlhbCIgZm9udC1zaXplPSIzMCIgZmlsbD0iIzk5OSIgdGV4dC1hbmNob3I9Im1pZGRsZSIgZG9taW5hbnQtYmFzZWxpbmU9Im1pZGRsZSI+8J+OpjwvdGV4dD4KPC9zdmc+';
         
         const title = item.title || 'Untitled Episode';
-        const description = item.description || 'No description available';
+        const description = cleanDescription(item.description || 'No description available');
         const creator = item.creator || '';
         const link = item.link || '#';
         const score = Math.round((item.finalScore || item.score || 0) * 100);
-        const language = item.language || '';
         
         // Add creator name if available
         const creatorInfo = creator ? `<span style="color: #888; font-size: 12px; display: block; margin-top: 4px;">by ${escapeHtml(creator)}</span>` : '';
-        
-        // Add language info if available and not "All" filter
-        const languageInfo = language && currentLanguageFilter !== 'all' 
-          ? `<div class="language-info">Language: ${escapeHtml(language)}</div>` 
-          : '';
         
         return `
           <div class="result-item">
@@ -687,7 +728,6 @@
               </a>
               ${creatorInfo}
               <p class="podcast-description">${escapeHtml(description)}</p>
-              ${languageInfo}
             </div>
             <div class="score-badge">${score}%</div>
           </div>
@@ -722,6 +762,20 @@
       const div = document.createElement('div');
       div.textContent = text;
       return div.innerHTML;
+    }
+    
+    // Clean HTML tags from description
+    function cleanDescription(text) {
+      if (!text) return '';
+      // Remove HTML tags
+      let cleaned = text.replace(/<[^>]*>/g, '');
+      // Decode HTML entities
+      const textarea = document.createElement('textarea');
+      textarea.innerHTML = cleaned;
+      cleaned = textarea.value;
+      // Remove extra whitespace
+      cleaned = cleaned.replace(/\s+/g, ' ').trim();
+      return cleaned;
     }
 
     function updateStatus(message) {
@@ -758,11 +812,6 @@
     function handleLanguageFilterChange(filter) {
       currentLanguageFilter = filter;
       
-      // Update button states
-      document.querySelectorAll('.filter-btn').forEach(btn => {
-        btn.classList.toggle('active', btn.dataset.filter === filter);
-      });
-      
       // Re-run search if there's a query
       if (lastSearchQuery) {
         performSearch(lastSearchQuery);
@@ -774,24 +823,49 @@
       console.log('Initializing AI Podcast Recommender with Language Filters...');
       
       const searchInput = document.getElementById('search');
+      const searchButton = document.getElementById('search-button');
+      const languageFilter = document.getElementById('language-filter');
+      
       searchInput.disabled = true;
+      searchButton.disabled = true;
       
       try {
         // Initialize models first
         await initializeModels();
         
-        // Set up language filter handlers
-        document.querySelectorAll('.filter-btn').forEach(btn => {
-          btn.addEventListener('click', () => {
-            handleLanguageFilterChange(btn.dataset.filter);
-          });
+        // Set up language filter handler
+        languageFilter.addEventListener('change', (e) => {
+          handleLanguageFilterChange(e.target.value);
         });
         
-        // Set up search handler with debouncing
+        // Function to trigger search
+        const triggerSearch = () => {
+          const query = searchInput.value.trim();
+          if (query.length > 0) {
+            performSearch(query);
+          } else {
+            document.getElementById('results').innerHTML = '';
+            updateStatus('Please enter a search term');
+          }
+        };
+        
+        // Set up search button handler
+        searchButton.addEventListener('click', triggerSearch);
+        
+        // Set up enter key handler for search input
+        searchInput.addEventListener('keypress', (e) => {
+          if (e.key === 'Enter') {
+            triggerSearch();
+          }
+        });
+        
+        // Optional: Keep the live search as user types (can be removed if you only want button search)
         const debouncedSearch = debounce(performSearch, CONFIG.DEBOUNCE_DELAY);
         searchInput.addEventListener('input', (e) => {
           const query = e.target.value.trim();
           if (query.length > 0) {
+            // Optional: Auto-search as user types
+            // Comment out next line if you only want search on button click
             debouncedSearch(query);
           } else {
             document.getElementById('results').innerHTML = '';
@@ -800,8 +874,9 @@
           }
         });
         
-        // Enable search input and focus
+        // Enable search controls
         searchInput.disabled = false;
+        searchButton.disabled = false;
         searchInput.focus();
         
         console.log('Application ready with language filtering!');
