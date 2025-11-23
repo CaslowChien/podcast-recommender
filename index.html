@@ -330,31 +330,27 @@
   </div>
 
   <script type="module">
-    // Simple configuration for GitHub Pages
+    // Improved configuration for better performance
     const CONFIG = {
-      SHARD_COUNT: 200,        // Total number of shard files
-      TOP_K: 30,               // Number of candidates to consider
-      FINAL_K: 10,             // Number of results to display
-      DEBOUNCE_DELAY: 600,     // Typing delay in milliseconds
-      BATCH_SIZE: 5,           // Shards to load simultaneously
-      MODEL_NAME: 'Xenova/all-MiniLM-L6-v2'  // Embedding model
+      SHARD_COUNT: 200,
+      TOP_K: 50,              // Increased from 30 to get better candidates
+      FINAL_K: 10,
+      DEBOUNCE_DELAY: 600,
+      BATCH_SIZE: 10,         // Increased from 5 to load faster
+      MODEL_NAME: 'Xenova/paraphrase-multilingual-MiniLM-L12-v2',  // Better multilingual support
+      MAX_CONCURRENT_REQUESTS: 6  // Limit browser connection pool
     };
 
     // Language filter configuration
     const LANGUAGE_FILTERS = {
-      // Languages to exclude completely
       EXCLUDED: [
         'zh-rtw', 'zh-hant', 'zh-Hant-', 'zh-Hans-', 'zh-Hant', 
         'en-us,zh', 'zh-US', 'eng, zho', 'zh-sg', 'zh-HK', 'zh-hk', 'zh-Ha'
       ],
-      
-      // Simplified Chinese variants
       SIMPLIFIED: [
         'zh-CN', 'zh_CN', 'zh-cn', 'zh', 'Zh', 'ZH', 
         'zh-Hans', 'zh-hans', 'zh-ZH', 'zh-zh', 'zho'
       ],
-      
-      // Traditional Chinese variants
       TRADITIONAL: [
         'zh-tw', 'zh-TW', 'zh_TW', 'zh_tw', 'zh-MO'
       ]
@@ -372,7 +368,6 @@
       try {
         const { pipeline, env } = await import('https://cdn.jsdelivr.net/npm/@xenova/transformers@2.17.2/dist/transformers.min.js');
         
-        // Configure for browser usage
         env.allowLocalModels = false;
         env.useBrowserCache = true;
         env.remoteURL = 'https://huggingface.co/';
@@ -380,7 +375,6 @@
         return { pipeline, env };
       } catch (error) {
         console.error('Failed to load transformers:', error);
-        // Try alternative CDN
         try {
           const { pipeline, env } = await import('https://unpkg.com/@xenova/transformers@2.17.2/dist/transformers.min.js');
           env.allowLocalModels = false;
@@ -402,7 +396,7 @@
       try {
         const { pipeline } = await loadTransformers();
         
-        console.log('Loading embedding model...');
+        console.log('Loading multilingual embedding model...');
         embedder = await pipeline('feature-extraction', CONFIG.MODEL_NAME);
         
         console.log('Model loaded successfully');
@@ -433,19 +427,16 @@
     function shouldIncludeItem(item) {
       const itemLanguage = (item.language || '').toLowerCase().trim();
       
-      // First, exclude completely blocked languages
       for (const excluded of LANGUAGE_FILTERS.EXCLUDED) {
         if (itemLanguage === excluded.toLowerCase()) {
           return false;
         }
       }
       
-      // If "All" is selected, include everything not in excluded list
       if (currentLanguageFilter === 'all') {
         return true;
       }
       
-      // Check specific language filters
       if (currentLanguageFilter === 'simplified') {
         for (const lang of LANGUAGE_FILTERS.SIMPLIFIED) {
           if (itemLanguage === lang.toLowerCase()) {
@@ -490,7 +481,7 @@
       for (let i = 0; i <= retries; i++) {
         try {
           const response = await fetch(`shards/shard_${shardId}.json`, {
-            cache: 'force-cache'  // Use browser cache aggressively
+            cache: 'force-cache'
           });
           
           if (!response.ok) {
@@ -504,13 +495,51 @@
             console.warn(`Failed to load shard_${shardId} after ${retries + 1} attempts`);
             return { shardId, data: null, error };
           }
-          // Wait before retry
           await new Promise(resolve => setTimeout(resolve, 100 * (i + 1)));
         }
       }
     }
 
-    // Main search function
+    // Improved keyword-based search for Chinese queries
+    function keywordSearch(query, items) {
+      const queryLower = query.toLowerCase();
+      const queryChars = query.split('');
+      
+      return items.map(item => {
+        let score = 0;
+        
+        const title = (item.title || '').toLowerCase();
+        const desc = (item.description || '').toLowerCase();
+        const creator = (item.creator || '').toLowerCase();
+        
+        // Exact match
+        if (title.includes(query)) score += 10;
+        if (desc.includes(query)) score += 5;
+        if (creator.includes(query)) score += 3;
+        
+        // Character-by-character matching for Chinese
+        let charMatches = 0;
+        for (const char of queryChars) {
+          if (title.includes(char)) charMatches++;
+        }
+        score += charMatches * 0.5;
+        
+        // Word boundary matching (for English)
+        const queryWords = queryLower.split(/\s+/).filter(w => w.length > 1);
+        for (const word of queryWords) {
+          if (title.includes(word)) score += 2;
+          if (desc.includes(word)) score += 1;
+        }
+        
+        return {
+          ...item,
+          keywordScore: score
+        };
+      }).filter(item => item.keywordScore > 0)
+        .sort((a, b) => b.keywordScore - a.keywordScore);
+    }
+
+    // Main search function with optimizations
     async function performSearch(query) {
       if (!query || query.trim().length < 2) {
         document.getElementById('results').innerHTML = '';
@@ -518,10 +547,8 @@
         return;
       }
 
-      // Save the current query
       lastSearchQuery = query;
 
-      // Cancel previous search if still running
       if (searchAbortController) {
         searchAbortController.abort();
       }
@@ -535,13 +562,12 @@
       document.getElementById('results').innerHTML = '';
 
       try {
-        // Ensure model is loaded
         if (!embedder) {
           await initializeModels();
           if (!embedder) return;
         }
 
-        console.log('Generating embedding for query:', query);
+        console.log('Query:', query);
         console.log('Language filter:', currentLanguageFilter);
         
         // Generate query embedding
@@ -550,24 +576,27 @@
           normalize: true 
         });
         
-        // Convert to array
         const queryVector = Array.from(output.data);
         
-        console.log('Query embedding generated, searching shards...');
+        console.log('Searching shards...');
         
-        // Track top results
         const topResults = [];
         let processedShards = 0;
         let totalItems = 0;
         let filteredCount = 0;
         let failedShards = 0;
+        
+        // Store all filtered items for keyword fallback
+        const allFilteredItems = [];
 
-        // Process shards in batches
+        // Process shards with controlled concurrency
         for (let i = 0; i < CONFIG.SHARD_COUNT; i += CONFIG.BATCH_SIZE) {
           if (searchAbortController.signal.aborted) break;
           
           const batch = [];
-          for (let j = i; j < Math.min(i + CONFIG.BATCH_SIZE, CONFIG.SHARD_COUNT); j++) {
+          const batchSize = Math.min(CONFIG.BATCH_SIZE, CONFIG.SHARD_COUNT - i);
+          
+          for (let j = i; j < i + batchSize; j++) {
             batch.push(loadShard(j));
           }
           
@@ -594,20 +623,20 @@
                 continue;
               }
               
+              // Store for keyword search
+              allFilteredItems.push(item);
+              
               const score = cosineSimilarity(queryVector, item.embedding);
               
-              // Keep top K results
               if (topResults.length < CONFIG.TOP_K) {
                 topResults.push({ ...item, score, shardId });
               } else {
-                // Find minimum score
                 let minIdx = 0;
                 for (let k = 1; k < topResults.length; k++) {
                   if (topResults[k].score < topResults[minIdx].score) {
                     minIdx = k;
                   }
                 }
-                // Replace if better
                 if (score > topResults[minIdx].score) {
                   topResults[minIdx] = { ...item, score, shardId };
                 }
@@ -615,12 +644,12 @@
             }
           }
           
-          // Update progress
-          if (processedShards % 10 === 0 || processedShards === CONFIG.SHARD_COUNT) {
+          // Update progress every 20 shards or at end
+          if (processedShards % 20 === 0 || processedShards === CONFIG.SHARD_COUNT) {
             const filterText = currentLanguageFilter !== 'all' 
-              ? ` (${filteredCount} filtered by language)` 
+              ? ` (${filteredCount} filtered)` 
               : '';
-            updateStatus(`Searched ${processedShards} of ${CONFIG.SHARD_COUNT} shards${filterText}...`);
+            updateStatus(`Searched ${processedShards}/${CONFIG.SHARD_COUNT} shards${filterText}...`);
           }
         }
 
@@ -631,11 +660,12 @@
           return;
         }
 
-        // Sort and rerank results
+        // Sort by similarity score
         topResults.sort((a, b) => b.score - a.score);
-        const reranked = rerankResults(query, topResults);
         
-        // Display top results
+        // Hybrid reranking: combine semantic similarity with keyword matching
+        const reranked = hybridRerank(query, topResults, allFilteredItems);
+        
         displayResults(reranked.slice(0, CONFIG.FINAL_K));
         
         const filterInfo = currentLanguageFilter !== 'all' 
@@ -653,39 +683,38 @@
       }
     }
 
-    // Rerank results based on keyword matching
-    function rerankResults(query, items) {
-      const queryLower = query.toLowerCase();
-      const queryWords = queryLower.split(/\s+/).filter(w => w.length > 2);
+    // Hybrid reranking combining semantic and keyword search
+    function hybridRerank(query, semanticResults, allItems) {
+      // Get keyword-based results
+      const keywordResults = keywordSearch(query, allItems.slice(0, 1000)); // Limit for performance
       
-      return items.map(item => {
-        let boost = 0;
+      // Create a map of keyword scores
+      const keywordScores = new Map();
+      keywordResults.forEach(item => {
+        const key = `${item.title}|${item.creator}`;
+        keywordScores.set(key, item.keywordScore);
+      });
+      
+      // Combine scores
+      return semanticResults.map(item => {
+        const key = `${item.title}|${item.creator}`;
+        const keywordScore = keywordScores.get(key) || 0;
         
-        const title = (item.title || '').toLowerCase();
-        const desc = (item.description || '').toLowerCase();
-        const creator = (item.creator || '').toLowerCase();
+        // Weight semantic similarity more for English, keywords more for Chinese
+        const hasChinese = /[\u4e00-\u9fa5]/.test(query);
+        const semanticWeight = hasChinese ? 0.3 : 0.7;
+        const keywordWeight = hasChinese ? 0.7 : 0.3;
         
-        // Exact phrase match
-        if (title.includes(queryLower)) boost += 0.4;
-        if (desc.includes(queryLower)) boost += 0.2;
-        if (creator.includes(queryLower)) boost += 0.15;
+        // Normalize scores to 0-1 range
+        const normalizedSemantic = item.score; // Already normalized
+        const normalizedKeyword = Math.min(keywordScore / 20, 1); // Scale keyword score
         
-        // Individual word matches
-        for (const word of queryWords) {
-          if (title.includes(word)) boost += 0.1;
-          if (desc.includes(word)) boost += 0.05;
-          if (creator.includes(word)) boost += 0.03;
-        }
-        
-        // Title starts with query
-        if (title.startsWith(queryLower)) boost += 0.3;
-        
-        // Creator starts with query (for searching by podcast name)
-        if (creator.startsWith(queryLower)) boost += 0.2;
+        const finalScore = (normalizedSemantic * semanticWeight) + (normalizedKeyword * keywordWeight);
         
         return {
           ...item,
-          finalScore: item.score + boost
+          keywordScore,
+          finalScore
         };
       }).sort((a, b) => b.finalScore - a.finalScore);
     }
@@ -700,7 +729,6 @@
       }
       
       container.innerHTML = results.map(item => {
-        // Use the correct field names from your JSON structure
         const imageUrl = item.image || 
           'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iODAiIGhlaWdodD0iODAiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+CiAgPHJlY3Qgd2lkdGg9IjgwIiBoZWlnaHQ9IjgwIiBmaWxsPSIjZTBlMGUwIi8+CiAgPHRleHQgeD0iNTAlIiB5PSI1MCUiIGZvbnQtZmFtaWx5PSJBcmlhbCIgZm9udC1zaXplPSIzMCIgZmlsbD0iIzk5OSIgdGV4dC1hbmNob3I9Im1pZGRsZSIgZG9taW5hbnQtYmFzZWxpbmU9Im1pZGRsZSI+8J+OpjwvdGV4dD4KPC9zdmc+';
         
@@ -710,7 +738,6 @@
         const link = item.link || '#';
         const score = Math.round((item.finalScore || item.score || 0) * 100);
         
-        // Add creator name if available
         const creatorInfo = creator ? `<span style="color: #888; font-size: 12px; display: block; margin-top: 4px;">by ${escapeHtml(creator)}</span>` : '';
         
         return `
@@ -735,7 +762,6 @@
       }).join('');
     }
 
-    // Display no results message
     function displayNoResults(hasFilteredResults = false) {
       const message = hasFilteredResults 
         ? `<p>No matching podcasts found with current language filter</p>
@@ -757,23 +783,18 @@
       `;
     }
 
-    // Utility functions
     function escapeHtml(text) {
       const div = document.createElement('div');
       div.textContent = text;
       return div.innerHTML;
     }
     
-    // Clean HTML tags from description
     function cleanDescription(text) {
       if (!text) return '';
-      // Remove HTML tags
       let cleaned = text.replace(/<[^>]*>/g, '');
-      // Decode HTML entities
       const textarea = document.createElement('textarea');
       textarea.innerHTML = cleaned;
       cleaned = textarea.value;
-      // Remove extra whitespace
       cleaned = cleaned.replace(/\s+/g, ' ').trim();
       return cleaned;
     }
@@ -795,7 +816,6 @@
       }, 5000);
     }
 
-    // Debounce function
     function debounce(func, wait) {
       let timeout;
       return function executedFunction(...args) {
@@ -808,19 +828,15 @@
       };
     }
 
-    // Handle language filter changes
     function handleLanguageFilterChange(filter) {
       currentLanguageFilter = filter;
-      
-      // Re-run search if there's a query
       if (lastSearchQuery) {
         performSearch(lastSearchQuery);
       }
     }
 
-    // Initialize application
     async function initialize() {
-      console.log('Initializing AI Podcast Recommender with Language Filters...');
+      console.log('Initializing AI Podcast Recommender (Improved)...');
       
       const searchInput = document.getElementById('search');
       const searchButton = document.getElementById('search-button');
@@ -830,15 +846,12 @@
       searchButton.disabled = true;
       
       try {
-        // Initialize models first
         await initializeModels();
         
-        // Set up language filter handler
         languageFilter.addEventListener('change', (e) => {
           handleLanguageFilterChange(e.target.value);
         });
         
-        // Function to trigger search
         const triggerSearch = () => {
           const query = searchInput.value.trim();
           if (query.length > 0) {
@@ -849,23 +862,18 @@
           }
         };
         
-        // Set up search button handler
         searchButton.addEventListener('click', triggerSearch);
         
-        // Set up enter key handler for search input
         searchInput.addEventListener('keypress', (e) => {
           if (e.key === 'Enter') {
             triggerSearch();
           }
         });
         
-        // Optional: Keep the live search as user types (can be removed if you only want button search)
         const debouncedSearch = debounce(performSearch, CONFIG.DEBOUNCE_DELAY);
         searchInput.addEventListener('input', (e) => {
           const query = e.target.value.trim();
           if (query.length > 0) {
-            // Optional: Auto-search as user types
-            // Comment out next line if you only want search on button click
             debouncedSearch(query);
           } else {
             document.getElementById('results').innerHTML = '';
@@ -874,15 +882,11 @@
           }
         });
         
-        // Enable search controls
         searchInput.disabled = false;
         searchButton.disabled = false;
         searchInput.focus();
         
-        console.log('Application ready with language filtering!');
-        console.log('Excluded languages:', LANGUAGE_FILTERS.EXCLUDED);
-        console.log('Simplified Chinese codes:', LANGUAGE_FILTERS.SIMPLIFIED);
-        console.log('Traditional Chinese codes:', LANGUAGE_FILTERS.TRADITIONAL);
+        console.log('Application ready with improved Chinese support!');
         
       } catch (error) {
         console.error('Failed to initialize:', error);
@@ -890,7 +894,6 @@
       }
     }
 
-    // Start the application when DOM is ready
     if (document.readyState === 'loading') {
       document.addEventListener('DOMContentLoaded', initialize);
     } else {
